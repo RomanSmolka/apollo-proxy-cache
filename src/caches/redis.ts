@@ -27,6 +27,14 @@ export class RedisCache<
     return null
   }
 
+  async hget(key: K): Promise<any | null> {
+    const result = await this.client.hgetall(key)
+    if (result) {
+      return result
+    }
+    return null
+  }
+
   async set(key: K, value: V, timeout: number): Promise<RedisCache<K, V>> {
     if (timeout > 0) {
       await this.client.set(key, JSON.stringify(value), 'EX', timeout)
@@ -35,4 +43,14 @@ export class RedisCache<
     await this.client.set(key, JSON.stringify(value))
     return this
   }
+
+  async hset(key: K, field: K, value: string, timeout: number): Promise<RedisCache<K, V>> {
+    if (timeout > 0) {
+      await this.client.hset(key, field, value, 'EX', timeout)
+      return this
+    }
+    await this.client.hset(key, field, value)
+    return this
+  }
+
 }

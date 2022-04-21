@@ -35,8 +35,16 @@ export class InMemoryCache<K extends string = string, V = Record<string, any>>
     return Promise.resolve(data)
   }
 
+  hget(key: string): Promise<any> {
+    return Promise.resolve(null)
+  }
+
   set(key: K, value: V, timeout: number): Promise<InMemoryCache<K, V>> {
     this.cache.set(key, { data: value, time: Number(new Date()), timeout })
+    return Promise.resolve(this)
+  }
+
+  hset(key: K, field: K, value: string, timeout: number): Promise<InMemoryCache<K, V>> {
     return Promise.resolve(this)
   }
 }

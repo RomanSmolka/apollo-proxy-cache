@@ -1,3 +1,4 @@
+import crypto from 'crypto'
 import { createProxyMiddleware, Options } from 'http-proxy-middleware'
 import { parse } from 'graphql'
 import { print } from 'graphql/language/printer'
@@ -15,13 +16,15 @@ import {
 } from './utils-browser-only'
 const CACHE_HEADER = 'X-Proxy-Cached'
 
-type RequestWithCache = Request & { _hasCache: { id: string; timeout: number } }
+type RequestWithCache = Request & { _hasCache: { id: string; timeout: number }, _bodyHash: string }
 
 export const createProxyCacheMiddleware =
   <T extends Cache<string, any>>(
     queryCache: T,
-    cacheKeyModifier?: CacheKeyModifier
-  ) =>
+    cacheKeyModifier?: CacheKeyModifier,
+    cacheBypassHeader?: string,
+    globalTimeout = 0
+  ) => 
   (proxyConfig: Options) => {
     const directiveMiddleware = async (
       req: RequestWithCache,
@@ -66,6 +69,43 @@ export const createProxyCacheMiddleware =
       next()
     }
 
+    const hashMiddleware = async (
+      req: RequestWithCache,
+      response: Response,
+      next: NextFunction
+    ) => {
+      if (!req.body && req.method === 'POST') {
+        console.warn(
+          '[skip] proxy-cache-middleware, request.body is not populated. Please add "body-parser" middleware (or similar).'
+        ) // eslint-disable-line
+        return next()
+      }
+
+      if (!req.body.query || (cacheBypassHeader && req.header(cacheBypassHeader))) {
+        return next()
+      }
+
+      const bodyJson = JSON.stringify(req.body)
+      const bodyHash = crypto.createHash('md5').update(bodyJson).digest('hex')
+      req._bodyHash = bodyHash
+
+      await queryCache.hset(
+        bodyHash, 
+        'lastRequested',
+        new Date().toISOString(),
+        globalTimeout
+      )
+
+      const cachedQuery = await queryCache.hget(bodyHash)
+      
+      if (cachedQuery && cachedQuery.response) {
+        response.setHeader(CACHE_HEADER, 'true')
+        return response.json({ data: JSON.parse(cachedQuery.response) })
+      }
+
+      next()
+    }
+
     const proxyMiddleware = createProxyMiddleware({
       ...proxyConfig,
       onProxyReq: (proxyReq, req, res) => {
@@ -84,13 +124,20 @@ export const createProxyCacheMiddleware =
         }
       },
       onProxyRes: async (proxyRes, req, res) => {
-        if ((req as RequestWithCache)._hasCache) {
-          const { id, timeout } = (req as RequestWithCache)._hasCache
+        const hasCache = (req as RequestWithCache)._hasCache
+        const bodyHash = (req as RequestWithCache)._bodyHash
+
+        if (hasCache || bodyHash) {
           try {
             const response = JSON.parse(await decode(proxyRes))
 
             if (!response.errors && response.data) {
-              await queryCache.set(id, response.data, timeout)
+              if (bodyHash) {
+                await queryCache.hset(bodyHash, 'request', JSON.stringify(req.body), globalTimeout)
+                await queryCache.hset(bodyHash, 'response', JSON.stringify(response.data), globalTimeout)
+              } else {
+                await queryCache.set(hasCache.id, response.data, hasCache.timeout)
+              }
             }
           } catch (e) {
             errorOnSet(e)
@@ -102,5 +149,5 @@ export const createProxyCacheMiddleware =
       },
     })
 
-    return { proxyMiddleware, directiveMiddleware }
+    return { proxyMiddleware, hashMiddleware, directiveMiddleware }
   }
