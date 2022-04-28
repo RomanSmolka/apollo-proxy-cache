@@ -15,6 +15,7 @@ import {
   CacheKeyModifier,
 } from './utils-browser-only'
 const CACHE_HEADER = 'X-Proxy-Cached'
+const CACHE_HASH_HEADER = 'X-Proxy-Hash'
 
 type RequestWithCache = Request & { _hasCache: { id: string; timeout: number }, _bodyHash: string }
 
@@ -100,6 +101,8 @@ export const createProxyCacheMiddleware =
       
       if (cachedQuery && cachedQuery.response) {
         response.setHeader(CACHE_HEADER, 'true')
+        response.setHeader(CACHE_HASH_HEADER, bodyHash)
+
         return response.json({ data: JSON.parse(cachedQuery.response) })
       }
 
